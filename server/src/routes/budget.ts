@@ -1052,6 +1052,31 @@ router.get('/debts', async (req: AuthRequest, res) => {
             debtMap[beneficiary][payer] = (debtMap[beneficiary][payer] ?? 0) + amt;
         }
 
+        // Subtract reimbursements: payer_id = debtor repaying, share beneficiary = creditor receiving
+        const reimbResult = await query(
+            `SELECT be.payer_id AS debtor_id,
+                    s.family_member_id AS creditor_id,
+                    s.share_amount
+             FROM budget_entries be
+             JOIN budget_entry_shares s ON s.budget_entry_id = be.id
+             WHERE be.user_id = $1
+               AND EXTRACT(MONTH FROM be.date) = $2
+               AND EXTRACT(YEAR FROM be.date) = $3
+               AND be.is_reimbursement = true
+               AND be.payer_id IS NOT NULL
+               AND s.family_member_id IS NOT NULL`,
+            [userId, parsedMonth, parsedYear]
+        );
+
+        for (const row of reimbResult.rows) {
+            const debtor = String(row.debtor_id);
+            const creditor = String(row.creditor_id);
+            const amt = toNumber(row.share_amount);
+            if (debtMap[debtor]?.[creditor] !== undefined) {
+                debtMap[debtor][creditor] = Math.max(0, debtMap[debtor][creditor] - amt);
+            }
+        }
+
         // Net out cross debts: if A owes B and B owes A, keep only the net on the larger side
         const seen = new Set<string>();
         const beneficiaries = Object.keys(debtMap);
@@ -1128,7 +1153,7 @@ router.get('/debts', async (req: AuthRequest, res) => {
 
         debts.sort((a, b) => b.amount - a.amount);
 
-        res.json({ success: true, data: debts });
+        res.json({ success: true, data: { debts } });
     } catch (error) {
         logger.error('budget.get_debts_error', {
             error: error instanceof Error ? error.message : String(error),

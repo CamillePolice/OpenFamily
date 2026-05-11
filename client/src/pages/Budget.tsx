@@ -121,6 +121,7 @@ const Budget: React.FC = () => {
     const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
     const [loading, setLoading] = useState(true);
     const [dialogOpen, setDialogOpen] = useState(false);
+    const [memberDashRefreshKey, setMemberDashRefreshKey] = useState(0);
     const [limitDialogOpen, setLimitDialogOpen] = useState(false);
     const [editingEntry, setEditingEntry] = useState<BudgetEntry | null>(null);
     const [formError, setFormError] = useState('');
@@ -336,6 +337,7 @@ const Budget: React.FC = () => {
             resetForm();
             loadEntries();
             loadStats();
+            setMemberDashRefreshKey((k) => k + 1);
         } catch (error) {
             console.error('Failed to save entry:', error);
             setFormError(error instanceof Error ? error.message : "Impossible d'enregistrer cette entrée.");
@@ -749,6 +751,7 @@ const Budget: React.FC = () => {
                     members={familyMembers}
                     currentMonth={currentMonth}
                     currentYear={currentYear}
+                    refreshKey={memberDashRefreshKey}
                     onSettleDebt={(fromId, toId, amount) => {
                         setEditingEntry(null);
                         setFormError('');

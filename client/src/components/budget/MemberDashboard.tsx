@@ -22,6 +22,7 @@ interface MemberDashboardProps {
     members: Array<{ id: string; name: string; color: string }>;
     currentMonth: number;
     currentYear: number;
+    refreshKey?: number;
     onSettleDebt?: (fromMemberId: string, toMemberId: string, amount: number) => void;
 }
 
@@ -51,58 +52,77 @@ const fmt = (n: number) =>
 
 const MONTH_SHORT = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
 
+const parseDebts = (payload: unknown): Debt[] => {
+    if (Array.isArray(payload)) return payload as Debt[];
+    return (payload as { debts?: Debt[] })?.debts ?? [];
+};
+
 // --- Component ---
 
 const MemberDashboard: React.FC<MemberDashboardProps> = ({
     members,
     currentMonth,
     currentYear,
+    refreshKey,
     onSettleDebt,
 }) => {
     const [selectedMemberId, setSelectedMemberId] = useState('');
     const [stats, setStats] = useState<BudgetMemberStatistics | null>(null);
     const [debts, setDebts] = useState<Debt[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [loadingDebts, setLoadingDebts] = useState(false);
+    const [loadingStats, setLoadingStats] = useState(false);
     const [error, setError] = useState('');
 
+    // Always fetch debts for group overview
     useEffect(() => {
-        if (!selectedMemberId) return;
+        let cancelled = false;
+        setLoadingDebts(true);
+
+        api.get<{ success: boolean; data: unknown }>(
+            `/api/budget/debts?month=${currentMonth}&year=${currentYear}`
+        )
+            .then((res) => {
+                if (cancelled) return;
+                setDebts(parseDebts(res.data));
+            })
+            .catch(() => { if (!cancelled) setDebts([]); })
+            .finally(() => { if (!cancelled) setLoadingDebts(false); });
+
+        return () => { cancelled = true; };
+    }, [currentMonth, currentYear, refreshKey]);
+
+    // Fetch member stats only when a member is selected
+    useEffect(() => {
+        if (!selectedMemberId) {
+            setStats(null);
+            return;
+        }
 
         let cancelled = false;
-        setLoading(true);
+        setLoadingStats(true);
         setError('');
 
-        Promise.all([
-            api.get<{ success: boolean; data: BudgetMemberStatistics }>(
-                `/api/budget/statistics/member/${selectedMemberId}?month=${currentMonth}&year=${currentYear}`
-            ),
-            api.get<{ success: boolean; data: { debts: Debt[] } }>(
-                `/api/budget/debts?month=${currentMonth}&year=${currentYear}`
-            ),
-        ])
-            .then(([statsRes, debtsRes]) => {
+        api.get<{ success: boolean; data: BudgetMemberStatistics }>(
+            `/api/budget/statistics/member/${selectedMemberId}?month=${currentMonth}&year=${currentYear}`
+        )
+            .then((res) => {
                 if (cancelled) return;
-                setStats(statsRes.data);
-                setDebts(debtsRes.data?.debts ?? []);
+                setStats(res.data);
             })
             .catch((err: Error) => {
                 if (cancelled) return;
                 setError(err.message || 'Erreur lors du chargement');
             })
-            .finally(() => {
-                if (!cancelled) setLoading(false);
-            });
+            .finally(() => { if (!cancelled) setLoadingStats(false); });
 
-        return () => {
-            cancelled = true;
-        };
-    }, [selectedMemberId, currentMonth, currentYear]);
+        return () => { cancelled = true; };
+    }, [selectedMemberId, currentMonth, currentYear, refreshKey]);
 
     const memberOptions = members.map((m) => ({ value: m.id, label: m.name }));
 
-    const relevantDebts = debts.filter(
-        (d) => d.from_member_id === selectedMemberId || d.to_member_id === selectedMemberId
-    );
+    const relevantDebts = selectedMemberId
+        ? debts.filter((d) => d.from_member_id === selectedMemberId || d.to_member_id === selectedMemberId)
+        : debts;
 
     const topCategories = stats
         ? Object.entries(stats.byCategory)
@@ -127,16 +147,56 @@ const MemberDashboard: React.FC<MemberDashboardProps> = ({
                 <Select
                     value={selectedMemberId}
                     onValueChange={setSelectedMemberId}
-                    placeholder="Choisir un membre"
+                    placeholder="Vue groupe"
                     options={memberOptions}
                 />
             </div>
 
+            {/* Group overview — no member selected */}
             {!selectedMemberId && (
-                <p className="text-sm text-muted-foreground">Sélectionnez un membre pour afficher son tableau de bord.</p>
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Règlements du mois</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        {loadingDebts && (
+                            <p className="text-sm text-muted-foreground">Chargement...</p>
+                        )}
+                        {!loadingDebts && debts.length === 0 && (
+                            <p className="text-sm text-muted-foreground">Aucun règlement ce mois-ci.</p>
+                        )}
+                        {!loadingDebts && debts.length > 0 && (
+                            <ul className="space-y-3">
+                                {debts.map((d, i) => (
+                                    <li
+                                        key={i}
+                                        className="flex items-center justify-between gap-3 rounded-lg bg-muted/50 px-4 py-3"
+                                    >
+                                        <span className="text-sm">
+                                            <span className="font-medium">{d.from_name}</span>
+                                            {' doit '}
+                                            <span className="font-semibold text-red-500">{fmt(d.amount)}</span>
+                                            {' à '}
+                                            <span className="font-medium">{d.to_name}</span>
+                                        </span>
+                                        {onSettleDebt && (
+                                            <Button
+                                                variant="secondary"
+                                                size="sm"
+                                                onClick={() => onSettleDebt(d.from_member_id, d.to_member_id, d.amount)}
+                                            >
+                                                Régler →
+                                            </Button>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </CardContent>
+                </Card>
             )}
 
-            {selectedMemberId && loading && (
+            {selectedMemberId && loadingStats && (
                 <p className="text-sm text-muted-foreground">Chargement...</p>
             )}
 
@@ -144,7 +204,7 @@ const MemberDashboard: React.FC<MemberDashboardProps> = ({
                 <p className="text-sm text-red-500">{error}</p>
             )}
 
-            {selectedMemberId && !loading && stats && (
+            {selectedMemberId && !loadingStats && stats && (
                 <>
                     {/* Summary cards */}
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -274,7 +334,7 @@ const MemberDashboard: React.FC<MemberDashboardProps> = ({
                         </Card>
                     )}
 
-                    {/* Debts */}
+                    {/* Member debts */}
                     {relevantDebts.length > 0 && (
                         <Card>
                             <CardHeader>
