@@ -42,6 +42,11 @@ jobs:
           context: .
           file: ./client/Dockerfile
           push: true
+          # URL publique de l'API (même origine que le front, proxifiée par le nginx du client).
+          # Sans ça, Vite retombe sur http://localhost:3001 (dev) -> "failed to fetch" en prod.
+          build-args: |
+            VITE_API_URL=https://colloc.camillepolice.com
+            VITE_WS_URL=wss://colloc.camillepolice.com
           tags: |
             ${{ env.IMAGE_PREFIX }}-client:latest
             ${{ env.IMAGE_PREFIX }}-client:${{ steps.sha.outputs.SHORT }}
